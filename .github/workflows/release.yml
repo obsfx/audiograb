@@ -16,6 +16,9 @@ jobs:
       - name: Build
         run: swift build -c release
 
+      - name: Package
+        run: tar -czf audiograb-macos-arm64.tar.gz -C .build/release audiograb
+
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -24,7 +27,7 @@ jobs:
         run: |
           SHORT_SHA="${COMMIT_SHA::7}"
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest .build/release/audiograb \
+          gh release create latest audiograb-macos-arm64.tar.gz \
             --title "Latest Build" \
             --notes "Built from [\`${SHORT_SHA}\`](${REPO_URL}/commit/${COMMIT_SHA})" \
             --prerelease
