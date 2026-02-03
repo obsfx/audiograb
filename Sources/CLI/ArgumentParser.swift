@@ -1,10 +1,16 @@
 import Foundation
 
+enum AudioSource: String {
+    case system
+    case mic
+}
+
 struct CaptureOptions {
     let outputPath: String
     let duration: Double
     let sampleRate: Int
     let channels: Int
+    let source: AudioSource
     let mute: Bool
     let verbose: Bool
     let jsonStdout: Bool
@@ -39,6 +45,7 @@ enum ArgumentParser {
         var duration: Double = 0
         var sampleRate: Int = 48000
         var channels: Int = 2
+        var source: AudioSource = .system
         var mute = false
         var verbose = false
         var jsonStdout = false
@@ -76,6 +83,12 @@ enum ArgumentParser {
                     throw ArgumentParserError.invalidValue("--channels", i < args.count ? args[i] : "")
                 }
                 channels = val
+            case "-s", "--source":
+                i += 1
+                guard i < args.count, let val = AudioSource(rawValue: args[i]) else {
+                    throw ArgumentParserError.invalidValue("--source", i < args.count ? args[i] : "")
+                }
+                source = val
             case "--mute":
                 mute = true
             case "-v", "--verbose":
@@ -98,6 +111,7 @@ enum ArgumentParser {
             duration: duration,
             sampleRate: sampleRate,
             channels: channels,
+            source: source,
             mute: mute,
             verbose: verbose,
             jsonStdout: jsonStdout
@@ -115,6 +129,7 @@ enum ArgumentParser {
           -d, --duration <seconds>  Recording duration in seconds (0 = until stopped, default: 0)
           -r, --sample-rate <rate>  Sample rate: 16000, 44100, 48000 (default: 48000)
           -c, --channels <count>    Channels: 1 or 2 (default: 2)
+          -s, --source <mode>       Audio source: system, mic (default: system)
               --mute                Mute system audio during capture
           -v, --verbose             Verbose logging to stderr
               --json-stdout         Output newline-delimited JSON to stdout

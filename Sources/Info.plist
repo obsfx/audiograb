@@ -12,5 +12,7 @@
     <string>1.0.0</string>
     <key>NSAudioCaptureUsageDescription</key>
     <string>av-audio-capture needs permission to record system audio.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>av-audio-capture needs permission to record microphone audio.</string>
 </dict>
 </plist>

@@ -12,6 +12,7 @@ final class AudioCaptureSession {
     private let sourceChannels: Int
     private let outputChannels: Int
     private let needsDownmix: Bool
+    private let needsUpmix: Bool
 
     // Pre-allocated conversion buffer
     private var conversionBuffer: UnsafeMutablePointer<Int16>
@@ -26,6 +27,7 @@ final class AudioCaptureSession {
         self.sourceChannels = sourceChannels
         self.outputChannels = outputChannels
         self.needsDownmix = sourceChannels == 2 && outputChannels == 1
+        self.needsUpmix = sourceChannels == 1 && outputChannels == 2
         self.writerQueue = DispatchQueue(label: "audiograb.writer", qos: .userInitiated)
 
         // Pre-allocate conversion buffer: enough for 200ms at 48kHz stereo
@@ -156,6 +158,16 @@ final class AudioCaptureSession {
                     conversionBuffer[f] = Int16(clamped * Float32(Int16.max))
                 }
                 let outBytes = frameCount * MemoryLayout<Int16>.stride
+                wavWriter.appendData(conversionBuffer, byteCount: outBytes)
+            } else if needsUpmix {
+                // Mono -> Stereo: duplicate sample to both channels
+                for f in 0..<frameCount {
+                    let clamped = max(-1.0, min(1.0, srcPtr[f]))
+                    let int16 = Int16(clamped * Float32(Int16.max))
+                    conversionBuffer[f * 2] = int16
+                    conversionBuffer[f * 2 + 1] = int16
+                }
+                let outBytes = frameCount * 2 * MemoryLayout<Int16>.stride
                 wavWriter.appendData(conversionBuffer, byteCount: outBytes)
             } else {
                 // Pass-through (same channel count): convert Float32 -> Int16

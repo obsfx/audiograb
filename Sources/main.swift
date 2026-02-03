@@ -18,6 +18,7 @@ do {
     Logger.debug("Duration: \(options.duration > 0 ? "\(options.duration)s" : "unlimited")")
     Logger.debug("Sample rate: \(options.sampleRate) Hz")
     Logger.debug("Channels: \(options.channels)")
+    Logger.debug("Source: \(options.source.rawValue)")
     Logger.debug("Mute: \(options.mute)")
 
     // Validate output path is writable
@@ -27,66 +28,99 @@ do {
         exitWithCode(.fileIOError, detail: "Directory not writable: \(directory)")
     }
 
-    // Set up audio tap first to get the native format
-    let tapManager = AudioTapManager()
-    do {
-        try tapManager.setup(mute: options.mute)
-    } catch AudioCaptureError.permissionDenied {
-        exitWithCode(.permissionDenied)
-    } catch {
-        exitWithCode(.deviceError, detail: error.localizedDescription)
-    }
-
-    guard let deviceID = tapManager.aggregateDeviceID,
-          let tapFormat = tapManager.tapFormat else {
-        exitWithCode(.deviceError, detail: "No aggregate device created")
-    }
-
-    // Use tap's native sample rate; channel count from user option (downmix supported)
-    let outputSampleRate = UInt32(tapFormat.mSampleRate)
-    let outputChannels = UInt16(options.channels)
-    let sourceChannels = Int(tapFormat.mChannelsPerFrame)
-
-    if Int(outputSampleRate) != options.sampleRate {
-        Logger.info("Using tap native sample rate: \(outputSampleRate) Hz (requested \(options.sampleRate) Hz)")
-    }
-
-    // Initialize WAV writer with actual output format
-    let wavWriter: WAVWriter
-    do {
-        wavWriter = try WAVWriter(
-            path: options.outputPath,
-            sampleRate: outputSampleRate,
-            channels: outputChannels
-        )
-    } catch {
-        exitWithCode(.fileIOError, detail: error.localizedDescription)
-    }
-
-    // Set up capture session
-    let session = AudioCaptureSession(
-        deviceID: deviceID,
-        wavWriter: wavWriter,
-        sourceChannels: sourceChannels,
-        outputChannels: Int(outputChannels)
-    )
-
-    // Cleanup closure shared by signal handler and duration timer
+    // Shared state
     let startTime = CFAbsoluteTimeGetCurrent()
-    let cleanup: () -> Void = {
-        if !Logger.jsonMode {
-            FileHandle.standardError.write(Data("\r\u{1B}[K".utf8))
+    let cleanup: () -> Void
+    let startCapture: () throws -> Void
+
+    switch options.source {
+    case .system:
+        // System audio via process tap + aggregate device
+        let tapManager = AudioTapManager()
+        do {
+            try tapManager.setup(mute: options.mute)
+        } catch AudioCaptureError.permissionDenied {
+            exitWithCode(.permissionDenied)
+        } catch {
+            exitWithCode(.deviceError, detail: error.localizedDescription)
         }
-        session.stop()
-        wavWriter.finalize()
-        tapManager.teardown()
-        let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-        Logger.info("Recorded \(String(format: "%.1f", elapsed))s to \(options.outputPath)")
-        Logger.json(
-            ("type", "result"),
-            ("path", options.outputPath),
-            ("duration", round(elapsed * 10) / 10)
+
+        guard let deviceID = tapManager.aggregateDeviceID,
+              let tapFormat = tapManager.tapFormat else {
+            exitWithCode(.deviceError, detail: "No aggregate device created")
+        }
+
+        let outputSampleRate = UInt32(tapFormat.mSampleRate)
+        let outputChannels = UInt16(options.channels)
+        let sourceChannels = Int(tapFormat.mChannelsPerFrame)
+
+        if Int(outputSampleRate) != options.sampleRate {
+            Logger.info("Using tap native sample rate: \(outputSampleRate) Hz (requested \(options.sampleRate) Hz)")
+        }
+
+        let wavWriter: WAVWriter
+        do {
+            wavWriter = try WAVWriter(path: options.outputPath, sampleRate: outputSampleRate, channels: outputChannels)
+        } catch {
+            exitWithCode(.fileIOError, detail: error.localizedDescription)
+        }
+
+        let session = AudioCaptureSession(
+            deviceID: deviceID, wavWriter: wavWriter,
+            sourceChannels: sourceChannels, outputChannels: Int(outputChannels)
         )
+
+        cleanup = {
+            if !Logger.jsonMode { FileHandle.standardError.write(Data("\r\u{1B}[K".utf8)) }
+            session.stop()
+            wavWriter.finalize()
+            tapManager.teardown()
+            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+            Logger.info("Recorded \(String(format: "%.1f", elapsed))s to \(options.outputPath)")
+            Logger.json(("type", "result"), ("path", options.outputPath), ("duration", round(elapsed * 10) / 10))
+        }
+        startCapture = { try session.start() }
+
+    case .mic:
+        // Microphone input device
+        let micInfo: InputDeviceInfo
+        do {
+            micInfo = try getDefaultInputDevice()
+        } catch {
+            exitWithCode(.deviceError, detail: "No input device found: \(error.localizedDescription)")
+        }
+
+        Logger.info("Mic device: ID=\(micInfo.deviceID), \(micInfo.sampleRate) Hz, \(micInfo.channelCount) ch")
+
+        let outputSampleRate = UInt32(micInfo.sampleRate)
+        let outputChannels = UInt16(options.channels)
+        let sourceChannels = micInfo.channelCount
+
+        if Int(outputSampleRate) != options.sampleRate {
+            Logger.info("Using mic native sample rate: \(outputSampleRate) Hz (requested \(options.sampleRate) Hz)")
+        }
+
+        let wavWriter: WAVWriter
+        do {
+            wavWriter = try WAVWriter(path: options.outputPath, sampleRate: outputSampleRate, channels: outputChannels)
+        } catch {
+            exitWithCode(.fileIOError, detail: error.localizedDescription)
+        }
+
+        let session = AudioCaptureSession(
+            deviceID: micInfo.deviceID, wavWriter: wavWriter,
+            sourceChannels: sourceChannels, outputChannels: Int(outputChannels)
+        )
+
+        cleanup = {
+            if !Logger.jsonMode { FileHandle.standardError.write(Data("\r\u{1B}[K".utf8)) }
+            session.stop()
+            wavWriter.finalize()
+            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+            Logger.info("Recorded \(String(format: "%.1f", elapsed))s to \(options.outputPath)")
+            Logger.json(("type", "result"), ("path", options.outputPath), ("duration", round(elapsed * 10) / 10))
+        }
+        startCapture = { try session.start() }
     }
 
     // Install signal handlers for graceful shutdown
@@ -109,14 +143,17 @@ do {
         timer.resume()
         durationTimer = timer
     }
-    _ = durationTimer  // prevent unused variable warning
+    _ = durationTimer
 
     // Start capture
     do {
-        try session.start()
+        try startCapture()
     } catch {
         exitWithCode(.deviceError, detail: error.localizedDescription)
     }
+
+    // Emit started event
+    Logger.json(("type", "started"), ("timestamp", Date().timeIntervalSince1970))
 
     // Live elapsed time display
     let displayTimer = DispatchSource.makeTimerSource(queue: .main)
