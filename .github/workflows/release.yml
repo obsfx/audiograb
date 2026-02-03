@@ -1,0 +1,36 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: swift build -c release
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp .build/release/audiograb dist/
+          cd dist && tar -czf audiograb-macos-arm64.tar.gz audiograb
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.sha }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          SHORT_SHA="${COMMIT_SHA::7}"
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest dist/audiograb-macos-arm64.tar.gz \
+            --title "Latest Build" \
+            --notes "Built from [\`${SHORT_SHA}\`](${REPO_URL}/commit/${COMMIT_SHA})" \
+            --prerelease
