@@ -8,8 +8,19 @@ Requires macOS 14.2 or later.
 
 ## Install
 
+### Prebuilt binary
+
+Download the latest build from the [releases page](https://github.com/obsfx/audiograb/releases/tag/latest).
+
 ```
-git clone https://github.com/user/audiograb.git
+tar -xzf audiograb-macos-arm64.tar.gz
+./audiograb --version
+```
+
+### Build from source
+
+```
+git clone https://github.com/obsfx/audiograb.git
 cd audiograb
 swift build -c release
 ```
@@ -29,7 +40,8 @@ audiograb --output <path> [options]
 -d, --duration <seconds>  Recording duration in seconds (0 = until stopped, default: 0)
 -r, --sample-rate <rate>  Sample rate: 16000, 44100, 48000 (default: 48000)
 -c, --channels <count>    Channels: 1 or 2 (default: 2)
-    --mute                Mute system audio during capture
+-s, --source <mode>       Audio source: system, mic (default: system)
+    --mute                Mute system audio during capture (system source only)
     --json-stdout         Output newline-delimited JSON to stdout
 -v, --verbose             Verbose logging to stderr
 -h, --help                Show help
@@ -62,9 +74,21 @@ Record with system speakers muted. The WAV file still contains audio.
 audiograb -o recording.wav -d 10 --mute
 ```
 
+Record from the default microphone instead of system audio.
+
+```
+audiograb -o recording.wav -d 10 --source mic
+```
+
 ## JSON output
 
 Use `--json-stdout` when spawning as a child process. All output goes to stdout as newline-delimited JSON. Each line has a `type` field.
+
+A started event fires once when the capture begins.
+
+```json
+{"type":"started","timestamp":1706184000.0}
+```
 
 Log events carry the log level and message.
 
@@ -86,11 +110,11 @@ A result event fires on completion with the output path and total duration.
 
 ## Permissions
 
-The tool uses Apple's Core Audio Taps API, which requires the System Audio Recording permission.
+**System audio** (`--source system`, the default) uses Apple's Core Audio Taps API, which requires the System Audio Recording permission. On the first run, macOS may prompt you to grant this permission. Some terminal emulators like iTerm and VS Code do not trigger the prompt automatically. If you get silence, open System Settings, go to Privacy and Security, then Screen and System Audio Recording, and scroll down to the System Audio Recording Only section. Add your terminal application there.
 
-On the first run, macOS may prompt you to grant this permission. Some terminal emulators like iTerm and VS Code do not trigger the prompt automatically. If you get silence, open System Settings, go to Privacy and Security, then Screen and System Audio Recording, and scroll down to the System Audio Recording Only section. Add your terminal application there.
+**Microphone** (`--source mic`) uses the default input device and requires the Microphone permission. macOS will prompt on first use. You can manage this in System Settings under Privacy and Security, then Microphone.
 
-If the tool runs but the WAV file contains silence, this is the cause.
+If the tool runs but the WAV file contains silence, a missing permission is the most likely cause.
 
 ## Exit codes
 
